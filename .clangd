@@ -1,0 +1,12 @@
+CompileFlags:
+  Add:
+    - -Iccode/include
+    - -Iinclude
+    # - -isystem
+    # - include
+    # - -isystem
+    # - ccode/include
+    - -Wall
+    - -xc
+    - -std=c2x
+    - -DMRB_BOXING_WORD
