@@ -547,7 +547,7 @@ mrb_value dcj_parse_object(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   dcj_skip_whitespace(ctx);
   dcj_parser_expect(mrb, ctx, ':');
   dcj_skip_whitespace(ctx);
-  if (mrb_obj_equal(mrb, key, usymv(jsonmarker_symbol))) {
+  if (mrb_obj_equal(mrb, key, usymv(jsonmarker_symbol)) && ctx->opts->sym_ext) {
     ctx->tosym = 1;
     mrb_value v = dcj_parse_string(mrb, ctx);
     dcj_skip_whitespace(ctx);
@@ -566,7 +566,6 @@ mrb_value dcj_parse_object(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
     key = dcj_parse_key(mrb, ctx);
     dcj_skip_whitespace(ctx);
     dcj_parser_expect(mrb, ctx, ':');
-    dcj_skip_whitespace(ctx);
 
     val = dcj_parse_value(mrb, ctx);
     dcj_skip_whitespace(ctx);
