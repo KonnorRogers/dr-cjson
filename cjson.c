@@ -215,6 +215,10 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx);
 // crimes!
 #define dcj_parser_match(ctx, chr)                                             \
   (dcj_parser_peek(ctx) == (chr) ? dcj_parser_adv(ctx) : 0)
+
+#define dcj_parser_match_noadv(ctx, chr) \
+  (dcj_parser_peek(ctx) == (chr) ? 1 : 0)
+
 #define dcj_parser_expect(mrb, ctx, chr)                                       \
   do {                                                                         \
     typeof(ctx) _ctx_ = (ctx);                                                 \
@@ -229,7 +233,7 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx);
   (pred(dcj_parser_peek(ctx)) ? dcj_parser_adv(ctx) : 0)
 
 #define dcj_parser_match_noadv_fn(ctx, pred)                                   \
-  (pred(dcj_parser_peek(ctx)) ? ((ctx)->stri, 1) : 0)
+  (pred(dcj_parser_peek(ctx)) ? 1 : 0)
 
 void dcj_skip_whitespace(struct dcj_parsing_ctx *ctx) {
   while (dcj_is_whitespace(dcj_parser_peek(ctx)))
@@ -389,7 +393,11 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   const char *pbeg = ctx->stri;
   mrb_value str;
 
-  if ((ctx->opts->sym_ext && ctx->parsing_key) || ctx->tosym) {
+  /* this *should* be extracted to a match_string function... */
+  _Bool is_reserved_key = dcj_parser_match(ctx, '@') && dcj_parser_match(ctx, '@') && dcj_parser_match(ctx, 'j') && dcj_parser_match(ctx, 'm') && dcj_parser_match(ctx, ':');
+  if (is_reserved_key) { ctx->tosym = 1; }
+  ctx->stri = pbeg;
+  if ((ctx->opts->symbolize_keys && ctx->parsing_key) || ctx->tosym) {
     while (dcj_parser_match_fn(ctx, dcj_is_simplestring_c)) {
     }
 
@@ -451,7 +459,7 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
     }
   }
 
-  if ((ctx->opts->sym_ext && ctx->parsing_key) || ctx->tosym) {
+  if ((ctx->opts->symbolize_keys && ctx->parsing_key) || ctx->tosym) {
     ctx->parsing_key = 0;
     ctx->tosym = 0;
     str = mrb_symbol_value(mrb_intern_str(mrb, str));
