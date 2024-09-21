@@ -313,8 +313,9 @@ enum unexpected_reason : uint8_t {
   case DCJ_UT_UEXP_EOF:
     mrb_raise(mrb, parse_error_class, "unexpected eof");
   case DCJ_UT_EXP_CHR:
-    mrb_raisef(mrb, parse_error_class, "epected '%c' got " raisefmt_char_int,
-               chr, char_int);
+    mrb_raisef(mrb, parse_error_class,
+               "[%i] expected '%c' got " raisefmt_char_int,
+               ctx->stri - ctx->str, chr, char_int);
   case DCJ_UT_UEXP_CC:
     mrb_raisef(mrb, parse_error_class,
                "unexpected control character " raisefmt_char_int, char_int);
@@ -497,7 +498,7 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
         mrb_str_cat(mrb, str, buf, seqlen);
         break;
       default:
-        dcj_notimpl(mrb, mrb->c->ci[0].stack[1]);
+        dcj_bug(mrb, 0, "cannot recognise %c %d escape seq", c, c);
       }
     }
   }
@@ -697,7 +698,7 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
 
 mrb_value dcj_parse_json_m(mrb_state *mrb, mrb_value) {
   mrb_value rstr;
-  mrb_value opts_v;
+  mrb_value opts_v = mrb_nil_value();
   const struct json_opts_t *opts;
   mrb_get_args(mrb, "S|o", &rstr, &opts_v);
 
@@ -930,7 +931,9 @@ mrb_value dcj_symbol_write_json(mrb_state *mrb, const struct json_opts_t *opts,
   if (!opts->sym_ext || as_key) {
     return dcj_write_json_ptrlen_str(mrb, name, len, bufstr);
   } else {
-    if (mrb_nil_p(bufstr)) { bufstr = mrb_str_new_capa(mrb, sizeof("{\"@@jm:symbol\":}") + 2 + len); }
+    if (mrb_nil_p(bufstr)) {
+      bufstr = mrb_str_new_capa(mrb, sizeof("{\"@@jm:symbol\":}") + 2 + len);
+    }
     mrb_str_cat_lit(mrb, bufstr, "{\"@@jm:symbol\":");
     dcj_write_json_ptrlen_str(mrb, name, len, bufstr);
     return mrb_str_cat_lit(mrb, bufstr, "}");
@@ -1039,7 +1042,6 @@ int dcj_hash_write_pair(mrb_state *mrb, mrb_value key, mrb_value value,
   mrb_value bufstr = data->bufstr;
   const struct json_opts_t *opts = data->opts;
 
-  mrb_p(mrb, mrb_bool_value(data->first));
   if (!data->first) {
     mrb_str_cat_lit(mrb, bufstr, ",\n");
   }
@@ -1104,10 +1106,11 @@ mrb_value dcj_hash_write_json(mrb_state *mrb, const struct json_opts_t *opts,
     memset(RSTR_PTR(rstr), ' ', indentlen);
     RSTR_SET_LEN(rstr, indentlen);
 
-    mrb_hash_foreach(
-        mrb, rhsh, dcj_hash_write_pair,
-        &(struct dcj_hashforeachdata){
-            .opts = &new_opts, .bufstr = bufstr, .indent = indent, .first = true});
+    mrb_hash_foreach(mrb, rhsh, dcj_hash_write_pair,
+                     &(struct dcj_hashforeachdata){.opts = &new_opts,
+                                                   .bufstr = bufstr,
+                                                   .indent = indent,
+                                                   .first = true});
 
     mrb_str_cat_lit(mrb, bufstr, "\n");
     RSTR_SET_LEN(rstr, opts->indent_depth * opts->indent_width);
@@ -1206,8 +1209,6 @@ mrb_value dcj_symbol_write_json_m(mrb_state *mrb, mrb_value self) {
 
 mrb_value dcj_array_write_json_m(mrb_state *mrb, mrb_value self) {
   write_args(mrb, RARRAY_LEN(self) == 0 ? 2 : 64);
-
-  mrb_p(mrb, bufstr);
 
   return dcj_array_write_json(mrb, opts, self, bufstr);
 }
