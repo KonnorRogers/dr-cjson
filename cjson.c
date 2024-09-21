@@ -1,30 +1,17 @@
 /* -*- c-mode -*- */
+
 #include "dragonruby.h"
 #include "mruby.h"
 #include "mruby/array.h"
 #include "mruby/istruct.h"
+#include "mruby/string.h"
 #include "mruby/value.h"
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#define EVAL(...) EVAL16(__VA_ARGS__)
-#define EVAL16(...) EVAL8(EVAL8(__VA_ARGS__))
-#define EVAL8(...) EVAL4(EVAL4(__VA_ARGS__))
-#define EVAL4(...) EVAL2(EVAL2(__VA_ARGS__))
-#define EVAL2(...) EVAL1(EVAL1(__VA_ARGS__))
-#define EVAL1(...) __VA_ARGS__
-#define DEFER1(m) m EMPTY()
-#define EMPTY()
-#define _MAP2s(func, a, b, c, ...)                                             \
-  func(a, b, c);                                                               \
-  __VA_OPT__(DEFER1(__MAP2s)()(func, a, b, __VA_ARGS__))
-
-#define __MAP2s() _MAP2s
-
-#define MAP(...) EVAL(_MAP2s(__VA_ARGS__))
-
-#define usym(name) usym__##name
+#define usym(name) usym__##name##__
 #define usymv(name) usym(val__##name)
 #define declare_usym(name)                                                     \
   mrb_sym usym(name);                                                          \
@@ -91,7 +78,8 @@ mrb_value minify_opts_val;
 static struct RClass *parse_error_class;
 static struct RClass *json_opts_class;
 
-#define DCJ_MAX_NESTING 256
+#define _DCJ_STRINGIFY(...) #__VA_ARGS__
+#define DCJ_STRINGIFY(...) _DCJ_STRINGIFY(__VA_ARGS__)
 
 struct dcj_parsing_ctx {
   const char *str;
@@ -105,6 +93,24 @@ struct dcj_parsing_ctx {
     uint8_t tosym : 1;
   };
 };
+
+#define dcj_bug(mrb, assert, msg, ...)                                         \
+  do {                                                                         \
+    if (!(assert)) {                                                           \
+      mrb_bug(mrb,                                                             \
+              msg " in %s"                                                     \
+                  " at line " DCJ_STRINGIFY(                                   \
+                      __LINE__) " with expr " DCJ_STRINGIFY(assert),           \
+              __VA_ARGS__ __VA_OPT__(, ) __func__);                            \
+    }                                                                          \
+  } while (0)
+
+#if defined(DCJ_DEBUG) || 1
+#define dcj_assert(mrb, assert, msg, ...)                                      \
+  dcj_bug(mrb, assert, "assertion failed " msg, __VA_ARGS__)
+#else
+#define dcj_assert(...) (void)0
+#endif
 
 mrb_value dcj_json_opts_newc(mrb_state *mrb, struct json_opts_t opts) {
   mrb_value instance;
@@ -216,8 +222,7 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx);
 #define dcj_parser_match(ctx, chr)                                             \
   (dcj_parser_peek(ctx) == (chr) ? dcj_parser_adv(ctx) : 0)
 
-#define dcj_parser_match_noadv(ctx, chr) \
-  (dcj_parser_peek(ctx) == (chr) ? 1 : 0)
+#define dcj_parser_match_noadv(ctx, chr) (dcj_parser_peek(ctx) == (chr) ? 1 : 0)
 
 #define dcj_parser_expect(mrb, ctx, chr)                                       \
   do {                                                                         \
@@ -239,6 +244,20 @@ void dcj_skip_whitespace(struct dcj_parsing_ctx *ctx) {
   while (dcj_is_whitespace(dcj_parser_peek(ctx)))
     dcj_parser_adv(ctx);
 }
+
+_Bool dcj_parser_match_string(struct dcj_parsing_ctx *ctx, const char *str,
+                              size_t len) {
+  const char *const eptr = ctx->stri + len;
+  const char *const send = str + len;
+
+  while (str < send && dcj_parser_match(ctx, *str++)) {
+  }
+
+  return ctx->stri == eptr;
+}
+
+#define dcj_parser_match_lit(ctx, str)                                         \
+  (dcj_parser_match_string(ctx, str "", sizeof(str "") - 1))
 
 enum unexpected_reason : uint8_t {
   DCJ_UT_EXP_VAL,
@@ -312,7 +331,7 @@ static uint8_t dcj_hextoi(const char c) { return hexlut[(uint8_t)c]; }
 
 static size_t dcj_parse_hex_esc(mrb_state *mrb, struct dcj_parsing_ctx *ctx,
                                 char buf[4]) {
-  if (dcj_buffer_remaining(ctx) < 3) {
+  if (dcj_buffer_remaining(ctx) < 4) {
     dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_UEXP_EOF, 0);
   }
 
@@ -321,9 +340,17 @@ static size_t dcj_parse_hex_esc(mrb_state *mrb, struct dcj_parsing_ctx *ctx,
   uint8_t tmpbuf[4];
   static_assert(sizeof(tmpbufi) == sizeof(tmpbuf));
 
+#if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
   for (int8_t i = 3; i >= 0; --i) {
     tmpbuf[i] = dcj_hextoi(*ctx->stri++);
   }
+#elif (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  for (int8_t i = 0; i < 4; ++i) {
+    tmpbuf[i] = dcj_hextoi(*ctx->stri++);
+  }
+#else
+#error "unknown endianess"
+#endif
 
   memcpy(&tmpbufi, tmpbuf, sizeof(tmpbuf));
   if (tmpbufi & 0xf0f0f0f0) {
@@ -339,14 +366,21 @@ static size_t dcj_parse_hex_esc(mrb_state *mrb, struct dcj_parsing_ctx *ctx,
       dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_UEXP_HS, 0);
     codepoint &= 0x03ff;
 
-    if (!dcj_parser_match(ctx, '\\') || !dcj_parser_match(ctx, 'u') ||
-        dcj_buffer_remaining(ctx) < 3) {
+    if (!dcj_parser_match_lit(ctx, "\\u") || dcj_buffer_remaining(ctx) < 4) {
       dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_EXP_CSP, 0);
     }
 
+#if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
     for (int8_t i = 3; i >= 0; --i) {
       tmpbuf[i] = dcj_hextoi(*ctx->stri++);
     }
+#elif (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+    for (int8_t i = 0; i < 4; ++i) {
+      tmpbuf[i] = dcj_hextoi(*ctx->stri++);
+    }
+#else
+#error "unknown endianess"
+#endif
 
     memcpy(&tmpbufi, tmpbuf, sizeof(tmpbuf));
     if (tmpbufi & 0xf0f0f0f0) {
@@ -393,9 +427,11 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   const char *pbeg = ctx->stri;
   mrb_value str;
 
-  /* this *should* be extracted to a match_string function... */
-  _Bool is_reserved_key = dcj_parser_match(ctx, '@') && dcj_parser_match(ctx, '@') && dcj_parser_match(ctx, 'j') && dcj_parser_match(ctx, 'm') && dcj_parser_match(ctx, ':');
-  if (is_reserved_key) { ctx->tosym = 1; }
+  _Bool is_reserved_key = dcj_parser_match_lit(ctx, "@@jm:");
+
+  if (is_reserved_key) {
+    ctx->tosym = 1;
+  }
   ctx->stri = pbeg;
   if ((ctx->opts->symbolize_keys && ctx->parsing_key) || ctx->tosym) {
     while (dcj_parser_match_fn(ctx, dcj_is_simplestring_c)) {
@@ -419,7 +455,7 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
     pbeg = ctx->stri;
     while (dcj_parser_match_fn(ctx, dcj_is_simplestring_c)) {
     }
-    
+
     size_t len = ctx->stri - pbeg;
     mrb_str_cat(mrb, str, pbeg, len);
   fallback:
@@ -627,15 +663,15 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
       dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_UEXP_EOF, 0);
     }
 
-    MAP(dcj_parser_expect, mrb, ctx, 't', 'r', 'u', 'e');
+    dcj_parser_match_lit(ctx, "true");
 
     return mrb_true_value();
   case 'f':
-    if (dcj_buffer_remaining(ctx) < 4) {
+    if (dcj_buffer_remaining(ctx) < 5) {
       dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_UEXP_EOF, 0);
     }
 
-    MAP(dcj_parser_expect, mrb, ctx, 'f', 'a', 'l', 's', 'e');
+    dcj_parser_match_lit(ctx, "false");
 
     return mrb_false_value();
   case 'n':
@@ -643,7 +679,7 @@ mrb_value dcj_parse_value(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
       dcj_parser_raise_unexpected(mrb, ctx, DCJ_UT_UEXP_EOF, 0);
     }
 
-    MAP(dcj_parser_expect, mrb, ctx, 'n', 'u', 'l', 'l');
+    dcj_parser_match_lit(ctx, "null");
 
     return mrb_nil_value();
   default:
@@ -694,6 +730,245 @@ mrb_value dcj_parse_json_m(mrb_state *mrb, mrb_value) {
   }
 }
 
+mrb_value true_string;
+mrb_value false_string;
+mrb_value null_string;
+
+#define FLO_TO_STR_PREC 16
+static mrb_value flo_to_s(mrb_state *mrb, mrb_value flt) {
+  mrb_float f = mrb_float(flt);
+  mrb_value str;
+
+  if (isinf(f)) {
+    str = f < 0 ? mrb_str_new_lit(mrb, "-Infinity")
+                : mrb_str_new_lit(mrb, "Infinity");
+    goto exit;
+  } else if (isnan(f)) {
+    str = mrb_str_new_lit(mrb, "NaN");
+    goto exit;
+  } else {
+    char fmt[] = "%." MRB_STRINGIZE(FLO_TO_STR_PREC) "g";
+    mrb_int len;
+    char *begp, *p, *endp;
+
+    str = mrb_float_to_str(mrb, flt, fmt);
+
+  insert_dot_zero:
+    begp = RSTRING_PTR(str);
+    len = RSTRING_LEN(str);
+    for (p = begp, endp = p + len; p < endp; ++p) {
+      if (*p == '.') {
+        goto exit;
+      } else if (*p == 'e') {
+        ptrdiff_t e_pos = p - begp;
+        mrb_str_cat(mrb, str, ".0", 2);
+        p = RSTRING_PTR(str) + e_pos;
+        memmove(p + 2, p, len - e_pos);
+        memcpy(p, ".0", 2);
+        goto exit;
+      }
+    }
+
+    if (FLO_TO_STR_PREC + (begp[0] == '-') <= len) {
+      --fmt[sizeof(fmt) - 3]; /* %.16g(%.8g) -> %.15g(%.7g) */
+      str = mrb_float_to_str(mrb, flt, fmt);
+      goto insert_dot_zero;
+    } else {
+      mrb_str_cat(mrb, str, ".0", 2);
+    }
+
+    goto exit;
+  }
+
+exit:
+  RSTR_SET_ASCII_FLAG(mrb_str_ptr(str));
+  return str;
+}
+
+#define write_args(mrb, capa)                                                  \
+  const struct json_opts_t *opts;                                              \
+  mrb_value bufstr;                                                            \
+  dcj_take_write_args(mrb, &opts, &bufstr, capa)
+
+void dcj_take_write_args(mrb_state *mrb, const struct json_opts_t **opts,
+                         mrb_value *bufstr, size_t capa) {
+  mrb_value str;
+  mrb_int argc = mrb_get_args(mrb, "|I!S", opts, json_opts_class, &str);
+
+  switch (argc) {
+  case 0:
+    *opts = &default_opts;
+  case 1:
+    if (capa) {
+      str = mrb_str_new_capa(mrb, capa == -1ull ? 16 : capa);
+    } else {
+      str = mrb_nil_value();
+    }
+  case 2:
+    *bufstr = str;
+    break;
+  default:
+    mrb_raisef(mrb, E_RUNTIME_ERROR, "[[bug]] somehow got argc of %i", argc);
+    __builtin_unreachable();
+  }
+}
+
+mrb_value
+dcj_integer_write_json(mrb_state *mrb,
+                       [[maybe_unused]] const struct json_opts_t *opts,
+                       mrb_value self, mrb_value bufstr) {
+  if (mrb_nil_p(bufstr)) {
+    return mrb_fixnum_to_str(mrb, self, 10);
+  } else {
+    dcj_assert(mrb, mrb_string_p(bufstr), "");
+    return mrb_str_cat_str(mrb, bufstr, mrb_fixnum_to_str(mrb, self, 10));
+  }
+}
+
+mrb_value dcj_float_write_json(mrb_state *mrb,
+                               [[maybe_unused]] const struct json_opts_t *opts,
+                               mrb_value self, mrb_value bufstr) {
+  if (mrb_nil_p(bufstr)) {
+    return flo_to_s(mrb, self);
+  } else {
+    dcj_assert(mrb, mrb_string_p(bufstr), "");
+    return mrb_str_cat_str(mrb, bufstr, flo_to_s(mrb, self));
+  }
+}
+
+mrb_value dcj_string_write_json(mrb_state *mrb,
+                                [[maybe_unused]] const struct json_opts_t *opts,
+                                mrb_value self, mrb_value bufstr) {
+  const struct RString *str = RSTRING(self);
+
+  mrb_int rstrlen = RSTR_LEN(str);
+  if (rstrlen == 0) {
+    return mrb_str_cat_lit(mrb, bufstr, "\"\"");
+  }
+
+  const char *strp = RSTR_PTR(str);
+  const char *pbeg = strp;
+  const char *const stre = strp + rstrlen;
+
+  mrb_str_cat_lit(mrb, bufstr, "\"");
+
+  while (strp < stre) {
+    char cc = *strp;
+    if ((uint8_t)cc >= ' ' && (uint8_t)cc < 0x80 &&
+        !(cc == '"' || cc == '\\')) {
+      ++strp;
+      continue;
+    }
+    mrb_str_cat(mrb, bufstr, pbeg, strp - pbeg);
+
+    if (cc & 0x80) {
+      // unicode
+      dcj_bug(mrb, 0, "unicode escapes not implemented");
+    } else {
+      switch (cc) {
+      case '\b':
+        mrb_str_cat_lit(mrb, bufstr, "\\b");
+        break;
+      case '\t':
+        mrb_str_cat_lit(mrb, bufstr, "\\t");
+        break;
+      case '\n':
+        mrb_str_cat_lit(mrb, bufstr, "\\n");
+        break;
+      case '\f':
+        mrb_str_cat_lit(mrb, bufstr, "\\f");
+        break;
+      case '\r':
+        mrb_str_cat_lit(mrb, bufstr, "\\r");
+        break;
+      default:
+        dcj_bug(mrb, 0, "this char %i, doesn't have an escape yet", cc);
+      }
+    }
+
+    ++strp;
+    pbeg = strp;
+  }
+
+    mrb_str_cat(mrb, bufstr, pbeg, strp - pbeg);
+  return mrb_str_cat_lit(mrb, bufstr, "\"");
+}
+
+mrb_value dcj_symbol_write_json(mrb_state *mrb,
+                                [[maybe_unused]] const struct json_opts_t *opts,
+                                mrb_value self, mrb_value bufstr);
+mrb_value dcj_array_write_json(mrb_state *mrb,
+                               [[maybe_unused]] const struct json_opts_t *opts,
+                               mrb_value self, mrb_value bufstr);
+mrb_value dcj_hash_write_json(mrb_state *mrb,
+                              [[maybe_unused]] const struct json_opts_t *opts,
+                              mrb_value self, mrb_value bufstr);
+mrb_value dcj_true_write_json(mrb_state *mrb,
+                              [[maybe_unused]] const struct json_opts_t *opts,
+                              [[maybe_unused]] mrb_value self,
+                              mrb_value bufstr) {
+  return mrb_str_cat_lit(mrb, bufstr, "true");
+}
+
+mrb_value dcj_false_write_json(mrb_state *mrb,
+                               [[maybe_unused]] const struct json_opts_t *opts,
+                               [[maybe_unused]] mrb_value self,
+                               mrb_value bufstr) {
+  return mrb_str_cat_lit(mrb, bufstr, "false");
+}
+
+mrb_value dcj_nil_write_json(mrb_state *mrb,
+                             [[maybe_unused]] const struct json_opts_t *opts,
+                             [[maybe_unused]] mrb_value self,
+                             mrb_value bufstr) {
+  return mrb_str_cat_lit(mrb, bufstr, "null");
+}
+
+mrb_value dcj_integer_write_json_m(mrb_state *mrb, mrb_value self) {
+  write_args(mrb, 0);
+  return dcj_integer_write_json(mrb, opts, self, bufstr);
+}
+
+mrb_value dcj_float_write_json_m(mrb_state *mrb, mrb_value self) {
+  write_args(mrb, 0);
+  return mrb_str_cat_str(mrb, bufstr, flo_to_s(mrb, self));
+}
+
+mrb_value dcj_string_write_json_m(mrb_state *mrb, mrb_value self) {
+  const struct RString *str = RSTRING(self);
+  write_args(mrb, RSTR_LEN(str) + 2);
+
+  return dcj_string_write_json(mrb, opts, self, bufstr);
+}
+
+mrb_value dcj_symbol_write_json_m(mrb_state *mrb, mrb_value self) {
+  mrb_int len;
+  const char *name = mrb_sym2name_len(mrb, mrb_symbol(self), &len);
+  dcj_bug(mrb, 0, "symbols notimpl yet");
+}
+
+mrb_value dcj_array_write_json_m(mrb_state *mrb, mrb_value self) {
+  dcj_bug(mrb, 0, "arrays notimpl yet");
+}
+
+mrb_value dcj_hash_write_json_m(mrb_state *mrb, mrb_value self) {
+  dcj_bug(mrb, 0, "hashes notimpl yet");
+}
+
+mrb_value dcj_true_write_json_m(mrb_state *mrb, mrb_value self) {
+  write_args(mrb, 4);
+  return dcj_true_write_json(mrb, opts, self, bufstr);
+}
+
+mrb_value dcj_false_write_json_m(mrb_state *mrb, mrb_value self) {
+  write_args(mrb, 5);
+  return dcj_true_write_json(mrb, opts, self, bufstr);
+}
+mrb_value dcj_nil_write_json_m(mrb_state *mrb, mrb_value self) {
+  write_args(mrb, 4);
+  return dcj_true_write_json(mrb, opts, self, bufstr);
+}
+
 void drb_register_c_extensions_with_api(mrb_state *mrb, struct drb_api_t *) {
 #define hexlutsetup(beg, end, off)                                             \
   do {                                                                         \
@@ -714,6 +989,7 @@ void drb_register_c_extensions_with_api(mrb_state *mrb, struct drb_api_t *) {
   struct RClass *argonaut_mod = mrb_define_module_id(mrb, usym(Argonaut));
   struct RClass *json_mod =
       mrb_define_module_under_id(mrb, argonaut_mod, usym(JSON));
+  mrb_value json_mod_v = mrb_obj_value(json_mod);
 
   parse_error_class = mrb_define_class_under_id(
       mrb, json_mod, usym(ParseError),
@@ -729,6 +1005,13 @@ void drb_register_c_extensions_with_api(mrb_state *mrb, struct drb_api_t *) {
   minify_opts_val = dcj_json_opts_newc(mrb, minify_opts);
   MRB_SET_FROZEN_FLAG(mrb_obj_ptr(minify_opts_val));
 
+  true_string = mrb_str_new_lit_frozen(mrb, "true");
+  mrb_iv_set(mrb, json_mod_v, usym(__true_str), true_string);
+  false_string = mrb_str_new_lit_frozen(mrb, "false");
+  mrb_iv_set(mrb, json_mod_v, usym(__false_str), false_string);
+  null_string = mrb_str_new_lit_frozen(mrb, "null");
+  mrb_iv_set(mrb, json_mod_v, usym(__null_str), null_string);
+
   mrb_define_class_method_id(mrb, json_opts_class, usym(new),
                              dcj_json_opts_new_m, MRB_ARGS_KEY(0, 8));
   mrb_define_module_function_id(mrb, json_opts_class, usym(default),
@@ -742,24 +1025,24 @@ void drb_register_c_extensions_with_api(mrb_state *mrb, struct drb_api_t *) {
   mrb_define_method_id(mrb, json_opts_class, usym(to_s), dcj_json_opts_inspect,
                        MRB_ARGS_NONE());
 
-  mrb_define_method_id(mrb, mrb->string_class, usym(to_json), dcj_notimpl,
+  mrb_define_method_id(mrb, mrb->string_class, usym(to_json),
+                       dcj_string_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->array_class, usym(to_json),
+                       dcj_array_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->hash_class, usym(to_json),
+                       dcj_hash_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->integer_class, usym(to_json),
+                       dcj_integer_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->float_class, usym(to_json),
+                       dcj_float_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->true_class, usym(to_json),
+                       dcj_true_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->false_class, usym(to_json),
+                       dcj_false_write_json_m, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->nil_class, usym(to_json), dcj_nil_write_json_m,
                        MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->array_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->hash_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->integer_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->float_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->true_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->false_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->nil_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
-  mrb_define_method_id(mrb, mrb->symbol_class, usym(to_json), dcj_notimpl,
-                       MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, mrb->symbol_class, usym(to_json),
+                       dcj_symbol_write_json_m, MRB_ARGS_OPT(1));
 
   mrb_define_module_function_id(mrb, json_mod, usym(parse), dcj_parse_json_m,
                                 MRB_ARGS_REQ(1));

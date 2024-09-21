@@ -28,5 +28,8 @@ ACCESSOR(space_in_empty)
 ACCESSOR(minify)
 ACCESSOR(integer_lits)
 ACCESSOR(slurp)
+SFUNC1(__true_str)
+SFUNC1(__false_str)
+SFUNC1(__null_str)
 
 #undef SFUNC1
