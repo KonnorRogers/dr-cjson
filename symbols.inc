@@ -8,6 +8,8 @@
 SFUNC1(Argonaut)
 SFUNC1(JSON)
 SFUNC1(ParseError)
+SFUNC1(SerializationError)
+SFUNC1(AssertFailed)
 SFUNC1(Options)
 SFUNC1(new)
 SFUNC1(DEFAULT)
