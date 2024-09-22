@@ -177,8 +177,8 @@ mrb_value dcj_json_opts_inspect(mrb_state *mrb, mrb_value self) {
   mrb_value rbool[2] = {mrb_false_value(), mrb_true_value()};
   return mrb_format(
       mrb,
-      "%T { indent_width: %i, symbolize_keys: %v, symbol_ext: %v, object_ext: "
-      "%v, space_in_empty: %v, minify: %v, integer_lits: %v, slurp: %v }",
+      "%T(indent_width: %i, symbolize_keys: %v, symbol_ext: %v, object_ext: "
+      "%v, space_in_empty: %v, minify: %v, integer_lits: %v, slurp: %v)",
       self, (mrb_int)opts.indent_width, rbool[opts.symbolize_keys],
       rbool[opts.sym_ext], rbool[opts.obj_ext], rbool[opts.spc_nul],
       rbool[opts.minify], rbool[opts.int_lit_int], rbool[opts.slurp]);
@@ -611,6 +611,7 @@ mrb_value dcj_parse_object(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   dcj_skip_whitespace(ctx);
 
   hash = mrb_hash_new(mrb);
+  mrb_int ai = mrb_gc_arena_save(mrb);
   mrb_hash_set(mrb, hash, key, val);
 
   while (dcj_parser_match(ctx, ',')) {
@@ -623,6 +624,7 @@ mrb_value dcj_parse_object(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
     dcj_skip_whitespace(ctx);
 
     mrb_hash_set(mrb, hash, key, val);
+    mrb_gc_arena_restore(mrb, ai);
   }
 
   /* dcj_skip_whitespace(ctx); */
@@ -638,10 +640,12 @@ mrb_value dcj_parse_array(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   }
 
   mrb_value ary = mrb_ary_new(mrb);
+  mrb_int ai = mrb_gc_arena_save(mrb);
 
   do {
     mrb_value elem = dcj_parse_value(mrb, ctx);
     mrb_ary_push(mrb, ary, elem);
+    mrb_gc_arena_restore(mrb, ai);
     dcj_skip_whitespace(ctx);
   } while (dcj_parser_match(ctx, ','));
 
@@ -736,8 +740,10 @@ mrb_value dcj_parse_json_m(mrb_state *mrb, mrb_value) {
       return ary;
     }
 
+    mrb_int ai = mrb_gc_arena_save(mrb);
     while (!dcj_past_end(&ctx)) {
       mrb_ary_push(mrb, ary, dcj_parse_value(mrb, &ctx));
+      mrb_gc_arena_restore(mrb, ai);
     }
 
     return ary;
@@ -807,7 +813,7 @@ exit:
 void dcj_take_write_args(mrb_state *mrb, const struct json_opts_t **opts,
                          mrb_value *bufstr, size_t capa) {
   mrb_value str;
-  mrb_value opts_v;
+  mrb_value opts_v = mrb_nil_value();
   mrb_int argc = mrb_get_args(mrb, "|oS", &opts_v, &str);
 
   switch (argc) {
