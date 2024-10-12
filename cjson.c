@@ -37,6 +37,7 @@ struct json_opts_t {
     uint8_t minify : 1;
     uint8_t int_lit_int : 1;
     uint8_t slurp : 1;
+    uint8_t string_symbols : 1;
   };
 };
 
@@ -60,7 +61,8 @@ struct json_opts_t default_opts = {.indent_width = 4,
                                    .spc_nul = 0,
                                    .minify = 0,
                                    .int_lit_int = 0,
-                                   .slurp = 0};
+                                   .slurp = 0,
+                                   .string_symbols = 0};
 
 mrb_value default_opts_val;
 
@@ -72,7 +74,8 @@ struct json_opts_t minify_opts = {.indent_width = 0,
                                   .spc_nul = 0,
                                   .minify = 1,
                                   .int_lit_int = 0,
-                                  .slurp = 0};
+                                  .slurp = 0,
+                                  .string_symbols = 0};
 
 mrb_value minify_opts_val;
 
@@ -122,13 +125,13 @@ mrb_value dcj_json_opts_newc(mrb_state *mrb, struct json_opts_t opts) {
 }
 
 mrb_value dcj_json_opts_new_m(mrb_state *mrb, mrb_value) {
-  const mrb_sym s_table[] = {usym(indent_width),   usym(symbolize_keys),
-                             usym(symbol_ext),     usym(object_ext),
-                             usym(space_in_empty), usym(minify),
-                             usym(integer_lits),   usym(slurp)};
-  mrb_value values[8];
+  const mrb_sym s_table[] = {
+      usym(indent_width), usym(symbolize_keys), usym(symbol_ext),
+      usym(object_ext),   usym(space_in_empty), usym(minify),
+      usym(integer_lits), usym(slurp),          usym(string_symbols)};
+  mrb_value values[9];
   mrb_kwargs kws = {.values = values,
-                    .num = 8,
+                    .num = 9,
                     .required = 0,
                     .rest = nullptr,
                     .table = s_table};
@@ -168,6 +171,9 @@ mrb_value dcj_json_opts_new_m(mrb_state *mrb, mrb_value) {
   if (!mrb_undef_p(values[7])) {
     opts->slurp = mrb_test(values[7]);
   }
+  if (!mrb_undef_p(values[8])) {
+    opts->string_symbols = mrb_test(values[8]);
+  }
 
   return optsv;
 }
@@ -178,10 +184,12 @@ mrb_value dcj_json_opts_inspect(mrb_state *mrb, mrb_value self) {
   return mrb_format(
       mrb,
       "%T(indent_width: %i, symbolize_keys: %v, symbol_ext: %v, object_ext: "
-      "%v, space_in_empty: %v, minify: %v, integer_lits: %v, slurp: %v)",
+      "%v, space_in_empty: %v, minify: %v, integer_lits: %v, slurp: %v, "
+      "string_symbols: %v)",
       self, (mrb_int)opts.indent_width, rbool[opts.symbolize_keys],
       rbool[opts.sym_ext], rbool[opts.obj_ext], rbool[opts.spc_nul],
-      rbool[opts.minify], rbool[opts.int_lit_int], rbool[opts.slurp]);
+      rbool[opts.minify], rbool[opts.int_lit_int], rbool[opts.slurp],
+      rbool[opts.string_symbols]);
 }
 
 mrb_value dcj_json_opts_default(mrb_state *, mrb_value) {
@@ -435,12 +443,11 @@ mrb_value dcj_parse_string(mrb_state *mrb, struct dcj_parsing_ctx *ctx) {
   const char *pbeg = ctx->stri;
   mrb_value str;
 
-  _Bool is_reserved_key = dcj_parser_match_lit(ctx, "@@jm:");
+  /* bad */
+  ctx->tosym = (ctx->opts->string_symbols && dcj_parser_match(ctx, ':') && (pbeg = ctx->stri)) ||
+               (dcj_parser_match_lit(ctx, "@@jm:") && (ctx->stri = pbeg)) ||
+               ctx->tosym;
 
-  if (is_reserved_key) {
-    ctx->tosym = 1;
-  }
-  ctx->stri = pbeg;
   if ((ctx->opts->symbolize_keys && ctx->parsing_key) || ctx->tosym) {
     while (dcj_parser_match_fn(ctx, dcj_is_simplestring_c)) {
     }
@@ -864,19 +871,32 @@ mrb_value dcj_float_write_json(mrb_state *mrb, mrb_value self,
 }
 
 mrb_value dcj_write_json_ptrlen_str(mrb_state *mrb, const char *str,
-                                    const size_t len, mrb_value bufstr) {
+                                    const size_t len, mrb_value bufstr,
+                                    _Bool is_symbol) {
   if (mrb_nil_p(bufstr)) {
     bufstr = mrb_str_new_capa(mrb, len + 2);
   }
   if (len == 0) {
-    return mrb_str_cat_lit(mrb, bufstr, "\"\"");
+    if (!is_symbol) {
+      return mrb_str_cat_lit(mrb, bufstr, "\"\"");
+    } else {
+      return mrb_str_cat_lit(mrb, bufstr, "\":\"");
+    }
   }
 
   const char *strp = str;
-  const char *pbeg = strp;
   const char *const stre = strp + len;
 
   mrb_str_cat_lit(mrb, bufstr, "\"");
+
+  if (!is_symbol && *strp == ':') {
+    mrb_str_cat_lit(mrb, bufstr, "\\u003a");
+    ++strp;
+  } else if (is_symbol) {
+    mrb_str_cat_lit(mrb, bufstr, ":");
+  }
+  
+  const char *pbeg = strp;
 
   while (strp < stre) {
     char cc = *strp;
@@ -924,24 +944,26 @@ mrb_value dcj_string_write_json(mrb_state *mrb, mrb_value self,
                                 mrb_value bufstr) {
   const struct RString *str = RSTRING(self);
 
-  return dcj_write_json_ptrlen_str(mrb, RSTR_PTR(str), RSTR_LEN(str), bufstr);
+  return dcj_write_json_ptrlen_str(mrb, RSTR_PTR(str), RSTR_LEN(str), bufstr,
+                                   false);
 }
 
 mrb_value dcj_symbol_write_json(mrb_state *mrb, const struct json_opts_t *opts,
                                 mrb_value self, mrb_value bufstr,
                                 _Bool as_key) {
-#warning todo: implement symbol ext
   mrb_int len;
   const char *name = mrb_sym2name_len(mrb, mrb_symbol(self), &len);
 
   if (!opts->sym_ext || as_key) {
-    return dcj_write_json_ptrlen_str(mrb, name, len, bufstr);
+    return dcj_write_json_ptrlen_str(mrb, name, len, bufstr, opts->string_symbols);
+  } else if (opts->string_symbols) {
+    return dcj_write_json_ptrlen_str(mrb, name, len, bufstr, true);
   } else {
     if (mrb_nil_p(bufstr)) {
       bufstr = mrb_str_new_capa(mrb, sizeof("{\"@@jm:symbol\":}") + 2 + len);
     }
     mrb_str_cat_lit(mrb, bufstr, "{\"@@jm:symbol\":");
-    dcj_write_json_ptrlen_str(mrb, name, len, bufstr);
+    dcj_write_json_ptrlen_str(mrb, name, len, bufstr, false);
     return mrb_str_cat_lit(mrb, bufstr, "}");
   }
 }
