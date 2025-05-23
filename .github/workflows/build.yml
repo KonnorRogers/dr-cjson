@@ -40,6 +40,7 @@ jobs:
             --target=x86_64-w64-mingw64 \
             -fuse-ld=lld \
             -isystem include -I . -fPIC \
+            -Wno-implicit-function-declaration \
             -o build/native/windows-amd64/cjson.dll cjson.c
 
       - name: Mac Build Config
@@ -49,6 +50,7 @@ jobs:
           clang -shared \
             -w \
             -isystem include -I . -fPIC \
+            -Wno-implicit-function-declaration \
             -o build/native/macos/cjson.dylib cjson.c
 
       - name: Linux Build Config
