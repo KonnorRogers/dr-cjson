@@ -28,15 +28,34 @@ jobs:
         with:
           version: "6.0"
           license_tier: pro
+      - name: Build extension
+        run: ./dragonruby-bind --output=cjson-bind.c cjson.c
       - name: Windows Build Config
         if: matrix.runner == 'windows-2022'
         run: |
-          echo "MINGW_DIR=/c/mingw64" >> $GITHUB_ENV
-          echo "CC=gcc" >> $GITHUB_ENV
-      # - name: Run tests
-      #   run: make test
-      - name: Build
-        run: make build-production
+          mkdir -p build/native/windows-amd64
+          clang -shared \
+            --sysroot=/c/mingw64 \
+            -fuse-ld=lld \
+            -isystem include -I . -fPIC \
+            -o build/native/windows-amd64/cjson.dll cjson-bind.c
+
+      - name: Mac Build Config
+        if: matrix.runner == 'macos-15'
+        run: |
+          mkdir -p build/native/macos
+          clang -shared \
+            -isystem include -I . -fPIC \
+            -o build/native/macos/cjson.dylib mygame/cjson-bind.c
+
+      - name: Linux Build Config
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          mkdir -p build/native/linux-amd64
+          clang -shared \
+            -isystem include -I . -fPIC \
+            -o build/native/linux-amd64/cjson.so cjson-bind.c
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LIBNAME }}-${{ runner.os }}
