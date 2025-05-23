@@ -36,6 +36,7 @@ jobs:
           mkdir -p build/native/windows-amd64
           clang -shared \
             include \
+            -w \
             --sysroot=/c/mingw64 \
             -fuse-ld=lld \
             -isystem include -I . -fPIC \
@@ -46,6 +47,7 @@ jobs:
         run: |
           mkdir -p build/native/macos
           clang -shared \
+            -w \
             include \
             -isystem include -I . -fPIC \
             -o build/native/macos/cjson.dylib mygame/cjson.c
@@ -55,6 +57,7 @@ jobs:
         run: |
           mkdir -p build/native/linux-amd64
           clang -shared \
+            -w \
             -isystem include -I . -fPIC \
             -o build/native/linux-amd64/cjson.so cjson.c
 
