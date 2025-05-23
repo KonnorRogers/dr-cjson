@@ -53,7 +53,7 @@ struct json_opts_t {
 
 #define unwrap_istruct_json_opts(var) (struct json_opts_t *)mrb_istruct_ptr(var)
 
-static_assert(sizeof(struct json_opts_t) <= ISTRUCT_DATA_SIZE);
+static_assert(sizeof(struct json_opts_t) <= ISTRUCT_DATA_SIZE, "");
 
 struct json_opts_t default_opts = {.indent_width = 4,
                                    .indent_depth = 0,
@@ -356,7 +356,7 @@ static size_t dcj_parse_hex_esc(mrb_state *mrb, struct dcj_parsing_ctx *ctx,
   uint32_t codepoint = 0;
   uint32_t tmpbufi;
   uint8_t tmpbuf[4];
-  static_assert(sizeof(tmpbufi) == sizeof(tmpbuf));
+  static_assert(sizeof(tmpbufi) == sizeof(tmpbuf), "");
 
 #if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
   for (int8_t i = 3; i >= 0; --i) {
@@ -1266,7 +1266,7 @@ mrb_value dcj_nil_write_json_m(mrb_state *mrb, mrb_value) {
 void drb_register_c_extensions_with_api(mrb_state *mrb, struct drb_api_t *) {
 #define hexlutsetup(beg, end, off)                                             \
   do {                                                                         \
-    static_assert(beg <= end);                                                 \
+    static_assert(beg <= end, "");                                                 \
     for (uint8_t i = beg; i <= end; ++i) {                                     \
       hexlut[i] = i + off;                                                     \
     }                                                                          \
