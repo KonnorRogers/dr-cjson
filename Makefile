@@ -1,7 +1,7 @@
 CEXT_NAME=cjson
 
 CC?=clang
-CFLAGS+=-shared -isystem include -I . -fPIC
+CFLAGS+=-w -shared -isystem include -I . -fPIC
 
 SYS:=$(shell ${CC} -dumpmachine)
 ifneq ($(findstring linux, $(SYS)),)
