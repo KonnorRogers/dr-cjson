@@ -135,7 +135,7 @@ mrb_value dcj_json_opts_new_m(mrb_state *mrb, mrb_value) {
   mrb_kwargs kws = {.values = values,
                     .num = 9,
                     .required = 0,
-                    .rest = nullptr,
+                    .rest = NULL,
                     .table = s_table};
 
   mrb_get_args(mrb, ":", &kws);
@@ -730,7 +730,7 @@ mrb_value dcj_parse_json_m(mrb_state *mrb, mrb_value) {
   struct dcj_parsing_ctx ctx = {.str = str,
                                 .stri = str,
                                 .send = str + len,
-                                .obeg = nullptr,
+                                .obeg = NULL,
                                 .co = mrb_nil_value(),
                                 .opts = opts,
                                 .parsing_key = 0};
