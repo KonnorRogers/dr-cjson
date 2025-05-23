@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #define usym(name) usym__##name##__
 #define usymv(name) usym(val__##name)
