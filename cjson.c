@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define usym(name) usym__##name##__
 #define usymv(name) usym(val__##name)
@@ -895,7 +896,7 @@ mrb_value dcj_write_json_ptrlen_str(mrb_state *mrb, const char *str,
   } else if (is_symbol) {
     mrb_str_cat_lit(mrb, bufstr, ":");
   }
-  
+
   const char *pbeg = strp;
 
   while (strp < stre) {
