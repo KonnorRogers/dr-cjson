@@ -1,0 +1,45 @@
+name: Test and Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  LIBNAME: cjson
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner:
+          - macos-15
+          # - ubuntu-22.04
+          # - windows-2022
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: kfischer-okarin/download-dragonruby@v1
+        with:
+          version: "6.0"
+          license_tier: pro
+      - name: Windows Build Config
+        if: matrix.runner == 'windows-2022'
+        run: |
+          echo "MINGW_DIR=/c/mingw64" >> $GITHUB_ENV
+          echo "CC=gcc" >> $GITHUB_ENV
+      # - name: Run tests
+      #   run: make test
+      - name: Build
+        run: make build-production
+      - name: Export Platform Name
+        run: echo "platform=$(ls $TESTGAME_DIR/native)" >> $GITHUB_ENV
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.LIBNAME }}-${{ runner.os }}
+          path: build/native/**/*
