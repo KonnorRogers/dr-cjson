@@ -8,7 +8,7 @@ ifneq ($(findstring linux, $(SYS)),)
     DYLIB_PATH=native/linux-amd64/
     DYLIB_EXTENSION=.so
 else ifneq ($(findstring mingw, $(SYS)),)
-    CFLAGS+=--target=x86_64-w64-mingw32 --sysroot=$(MINGW_DIR) -fuse-ld=lld
+    CFLAGS+=--sysroot=$(MINGW_DIR) -fuse-ld=lld
     EXEC_CFLAGS=-mconsole
     EXEC_EXTENSION=.exe
     DYLIB_PATH=native/windows-amd64
